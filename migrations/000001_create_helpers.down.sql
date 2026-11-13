@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS public.kompu_set_updated_at();

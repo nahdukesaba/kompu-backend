@@ -1,0 +1,15 @@
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Binaries & build output
+/bin/
+*.exe
+*.test
+*.out
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
