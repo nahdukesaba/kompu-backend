@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os/signal"
@@ -59,14 +61,16 @@ func main() {
 	app.Use(logger.New(logger.Config{
 		Format: "[${time}] ${locals:requestid} ${status} ${latency} ${method} ${path}\n",
 	}))
+	// Credentials: the session is an HttpOnly cookie, so the allowlist must be explicit.
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: strings.Join(cfg.App.CORSAllowedOrigins, ","),
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
+		AllowOrigins:     strings.Join(cfg.App.CORSAllowedOrigins, ","),
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders:     "Origin,Content-Type,Accept",
+		AllowCredentials: true,
 	}))
+	app.Use(middleware.RequireTrustedOrigin(cfg.App.CORSAllowedOrigins))
 
-	sso := middleware.SSOAuth(middleware.NewCentralVerifier(cfg.SSO.BaseURL, cfg.SSO.VerifyTimeout))
-	handler.RegisterRoutes(app, routes, sso, captionRateLimit())
+	handler.RegisterRoutes(app, routes, routes.Auth.RequireSession, captionRateLimit())
 
 	// Graceful shutdown on Ctrl+C / SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -139,7 +143,33 @@ func newRoutes(cfg *config.Config, pool *pgxpool.Pool) (handler.Routes, error) {
 	}
 	captionService := service.NewCaptionService(generator, guideline)
 
+	sessionKey := cfg.Session.Key
+	if sessionKey == "" { // config requires it in production
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return handler.Routes{}, fmt.Errorf("session key: %w", err)
+		}
+		sessionKey = base64.StdEncoding.EncodeToString(key)
+		log.Println("APP_SESSION_KEY not set: using a random key, sessions end on restart")
+	}
+	ssoService, err := service.NewSSOService(service.SSOConfig{
+		BaseURL:               cfg.SSO.BaseURL,
+		ClientID:              cfg.SSO.ClientID,
+		RedirectURI:           cfg.SSO.RedirectURI,
+		PostLogoutRedirectURI: cfg.SSO.PostLogoutRedirectURI,
+		FlowHMACKey:           cfg.SSO.FlowHMACKey,
+		FlowTTL:               cfg.SSO.FlowTTL,
+		IntrospectionSecret:   cfg.SSO.IntrospectionSecret,
+		Timeout:               cfg.SSO.VerifyTimeout,
+		SessionKey:            sessionKey,
+		SessionTTL:            cfg.Session.TTL,
+	}, repository.NewSSORepository(pool))
+	if err != nil {
+		return handler.Routes{}, fmt.Errorf("sso: %w", err)
+	}
+
 	return handler.Routes{
+		Auth:     handler.NewAuthHandler(ssoService, cfg.Session.CookieSecure, cfg.Session.TTL),
 		Health:   handler.NewHealthHandler(cfg.App.Name, cfg.App.Env, pool),
 		Uploads:  handler.NewUploadHandler(storageService),
 		Jobs:     handler.NewJobHandler(jobService, storageService),

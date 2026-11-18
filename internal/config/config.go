@@ -14,6 +14,7 @@ type Config struct {
 	App      AppConfig
 	Database DatabaseConfig
 	SSO      SSOConfig
+	Session  SessionConfig
 	Storage  StorageConfig
 	AI       AIConfig
 	Caption  CaptionConfig
@@ -38,9 +39,24 @@ type DatabaseConfig struct {
 	MinConns int
 }
 
+// SSOConfig is the browser-SSO client registration with sso-balai
+// (authorization code + PKCE S256, see docs/sso.md).
 type SSOConfig struct {
-	BaseURL       string
-	VerifyTimeout time.Duration
+	BaseURL               string
+	VerifyTimeout         time.Duration // timeout for every server-to-server call to sso-balai
+	ClientID              string
+	RedirectURI           string // exact match with sso-balai's allowlist
+	PostLogoutRedirectURI string // exact match with sso-balai's allowlist
+	FlowHMACKey           string // base64, >= 32 bytes; derives the PKCE verifier
+	FlowTTL               time.Duration
+	IntrospectionSecret   string // >= 32 chars, equal to sso-balai's SSO_KOMPU_INTROSPECTION_SECRET
+}
+
+// SessionConfig is the encrypted HttpOnly app-session cookie.
+type SessionConfig struct {
+	Key          string // base64 of exactly 32 bytes (AES-256-GCM)
+	TTL          time.Duration
+	CookieSecure bool
 }
 
 type StorageConfig struct {
@@ -92,8 +108,19 @@ func Load() (*Config, error) {
 			MinConns: r.int("DB_MIN_CONNS", 2),
 		},
 		SSO: SSOConfig{
-			BaseURL:       strings.TrimRight(r.str("SSO_BASE_URL", ""), "/"),
-			VerifyTimeout: r.duration("SSO_VERIFY_TIMEOUT", 5*time.Second),
+			BaseURL:               strings.TrimRight(r.str("SSO_BASE_URL", ""), "/"),
+			VerifyTimeout:         r.duration("SSO_VERIFY_TIMEOUT", 10*time.Second),
+			ClientID:              r.str("SSO_CLIENT_ID", ""),
+			RedirectURI:           r.str("SSO_REDIRECT_URI", ""),
+			PostLogoutRedirectURI: r.str("SSO_POST_LOGOUT_REDIRECT_URI", ""),
+			FlowHMACKey:           r.str("SSO_FLOW_HMAC_KEY", ""),
+			FlowTTL:               r.duration("SSO_FLOW_TTL", 5*time.Minute),
+			IntrospectionSecret:   r.str("SSO_INTROSPECTION_SECRET", ""),
+		},
+		Session: SessionConfig{
+			Key:          r.str("APP_SESSION_KEY", ""),
+			TTL:          r.duration("APP_SESSION_TTL", 8*time.Hour),
+			CookieSecure: r.str("APP_SESSION_COOKIE_SECURE", "true") == "true",
 		},
 		Storage: StorageConfig{
 			Endpoint:            strings.TrimRight(r.str("STORAGE_ENDPOINT", ""), "/"),
@@ -158,8 +185,33 @@ func (c *Config) validate() error {
 			(u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			errs = append(errs, fmt.Errorf("SSO_BASE_URL must be an http(s) URL, got %q", c.SSO.BaseURL))
 		} else if c.App.IsProduction() && u.Scheme != "https" {
-			errs = append(errs, errors.New("SSO_BASE_URL must use https in production (bearer tokens are sent to it)"))
+			errs = append(errs, errors.New("SSO_BASE_URL must use https in production (tokens are sent to it)"))
 		}
+		for _, f := range []struct{ name, val string }{
+			{"SSO_CLIENT_ID", c.SSO.ClientID},
+			{"SSO_REDIRECT_URI", c.SSO.RedirectURI},
+			{"SSO_POST_LOGOUT_REDIRECT_URI", c.SSO.PostLogoutRedirectURI},
+			{"SSO_FLOW_HMAC_KEY", c.SSO.FlowHMACKey},
+			{"SSO_INTROSPECTION_SECRET", c.SSO.IntrospectionSecret},
+			{"APP_SESSION_KEY", c.Session.Key},
+		} {
+			if f.val == "" {
+				errs = append(errs, fmt.Errorf("%s is required in production", f.name))
+			}
+		}
+		if !c.Session.CookieSecure {
+			errs = append(errs, errors.New("APP_SESSION_COOKIE_SECURE must be true in production"))
+		}
+	}
+	// Short secrets make every SSO request fail; report it at boot instead.
+	if s := c.SSO.IntrospectionSecret; s != "" && len(s) < 32 {
+		errs = append(errs, errors.New("SSO_INTROSPECTION_SECRET must be at least 32 characters"))
+	}
+	if c.SSO.FlowTTL < time.Minute || c.SSO.FlowTTL > 30*time.Minute {
+		errs = append(errs, errors.New("SSO_FLOW_TTL must be between 1m and 30m"))
+	}
+	if c.Session.TTL < time.Minute {
+		errs = append(errs, errors.New("APP_SESSION_TTL must be at least 1m"))
 	}
 
 	// Object storage is required from Phase 4 onward.
