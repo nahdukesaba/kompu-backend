@@ -70,6 +70,20 @@ type StorageConfig struct {
 	MaxJobFileBytes     int64
 	MaxReleaseFileBytes int64
 	DownloadExpiry      time.Duration
+
+	// OneDrive (Microsoft Graph, delegated refresh token). When MS_TENANT_ID,
+	// MS_CLIENT_ID and MS_CLIENT_SECRET are set, uploads go to OneDrive under
+	// OneDriveRoot instead of S3. S3 stays configured as the copy source.
+	MSTenantID     string
+	MSClientID     string
+	MSClientSecret string
+	MSRefreshToken string
+	OneDriveRoot   string
+}
+
+// OneDriveEnabled reports whether uploads go to OneDrive.
+func (s StorageConfig) OneDriveEnabled() bool {
+	return s.MSTenantID != "" && s.MSClientID != "" && s.MSClientSecret != ""
 }
 
 type AIConfig struct {
@@ -133,6 +147,11 @@ func Load() (*Config, error) {
 			MaxJobFileBytes:     r.int64("MAX_JOB_FILE_BYTES", 10*1024*1024),
 			MaxReleaseFileBytes: r.int64("MAX_RELEASE_FILE_BYTES", 50*1024*1024),
 			DownloadExpiry:      r.duration("STORAGE_DOWNLOAD_EXPIRY", time.Hour),
+			MSTenantID:          r.str("MS_TENANT_ID", ""),
+			MSClientID:          r.str("MS_CLIENT_ID", ""),
+			MSClientSecret:      r.str("MS_CLIENT_SECRET", ""),
+			MSRefreshToken:      r.str("MS_REFRESH_TOKEN", ""),
+			OneDriveRoot:        r.str("ONEDRIVE_ROOT", "/db/kompu"),
 		},
 		AI: AIConfig{
 			BaseURL: strings.TrimRight(r.str("AI_BASE_URL", ""), "/"),

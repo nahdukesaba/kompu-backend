@@ -97,14 +97,33 @@ func main() {
 
 // newRoutes builds every repository, service and handler.
 func newRoutes(cfg *config.Config, pool *pgxpool.Pool) (handler.Routes, error) {
-	objectStorage, err := repository.NewS3Storage(repository.S3StorageConfig{
-		Endpoint:        cfg.Storage.Endpoint,
-		Region:          cfg.Storage.Region,
-		AccessKeyID:     cfg.Storage.AccessKeyID,
-		SecretAccessKey: cfg.Storage.SecretAccessKey,
-	})
-	if err != nil {
-		return handler.Routes{}, fmt.Errorf("storage: %w", err)
+	var objectStorage service.ObjectStorage
+	var files *handler.FileHandler
+	if cfg.Storage.OneDriveEnabled() {
+		od, err := repository.NewOneDriveStorage(repository.OneDriveConfig{
+			TenantID:     cfg.Storage.MSTenantID,
+			ClientID:     cfg.Storage.MSClientID,
+			ClientSecret: cfg.Storage.MSClientSecret,
+			RefreshToken: cfg.Storage.MSRefreshToken,
+			Root:         cfg.Storage.OneDriveRoot,
+		}, pool)
+		if err != nil {
+			return handler.Routes{}, fmt.Errorf("storage: %w", err)
+		}
+		objectStorage, files = od, handler.NewFileHandler(od)
+		log.Printf("file storage: OneDrive %s", cfg.Storage.OneDriveRoot)
+	} else {
+		s3, err := repository.NewS3Storage(repository.S3StorageConfig{
+			Endpoint:        cfg.Storage.Endpoint,
+			Region:          cfg.Storage.Region,
+			AccessKeyID:     cfg.Storage.AccessKeyID,
+			SecretAccessKey: cfg.Storage.SecretAccessKey,
+		})
+		if err != nil {
+			return handler.Routes{}, fmt.Errorf("storage: %w", err)
+		}
+		objectStorage = s3
+		log.Println("file storage: S3 (MS_* not set)")
 	}
 	storageService := service.NewStorageService(objectStorage, service.StorageServiceConfig{
 		BucketJobs:      cfg.Storage.BucketJobs,
@@ -175,6 +194,7 @@ func newRoutes(cfg *config.Config, pool *pgxpool.Pool) (handler.Routes, error) {
 		Jobs:     handler.NewJobHandler(jobService, storageService),
 		Releases: handler.NewReleaseHandler(releaseService, storageService),
 		Captions: handler.NewCaptionHandler(captionService),
+		Files:    files,
 	}, nil
 }
 

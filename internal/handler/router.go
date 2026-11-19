@@ -10,6 +10,7 @@ type Routes struct {
 	Releases *ReleaseHandler
 	Captions *CaptionHandler
 	Auth     *AuthHandler // optional: nil in route tests
+	Files    *FileHandler // optional: only when files live in OneDrive
 }
 
 // RegisterRoutes mounts the whole API under /api/v1.
@@ -25,6 +26,7 @@ type Routes struct {
 //	PUT    /releases/:id                 auth
 //	DELETE /releases/:id                 auth
 //	POST   /releases/generate-caption    auth, then rateLimit
+//	GET    /files/<key>                  public, 302 to OneDrive (when enabled)
 //	/api/auth/...                         sso-balai browser SSO (see AuthHandler.Register)
 //
 // auth is the session middleware (AuthHandler.RequireSession). It is applied
@@ -38,6 +40,9 @@ func RegisterRoutes(app *fiber.App, r Routes, auth, rateLimit fiber.Handler) {
 		// /api/auth/*, not /api/v1: sso-balai registers Kompu's launch URL as
 		// {host}/api/auth/sso/start, like SILAPET and Klinik.
 		r.Auth.Register(app.Group("/api"))
+	}
+	if r.Files != nil {
+		r.Files.Register(api)
 	}
 	r.Uploads.Register(api, auth)
 	r.Jobs.Register(api, auth)
