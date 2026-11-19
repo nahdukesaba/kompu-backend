@@ -96,7 +96,7 @@ func Load() (*Config, error) {
 			Name:               r.str("APP_NAME", "kompu-backend"),
 			Env:                strings.ToLower(r.str("APP_ENV", "development")),
 			Port:               r.str("PORT", "8080"),
-			CORSAllowedOrigins: r.list("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), // 5173 = kompu-web dev server
+			CORSAllowedOrigins: r.list("CORS_ALLOWED_ORIGINS", "http://kompu.test:8084"), // kompu-web dev server, as registered in sso-balai
 			ReadTimeout:        r.duration("READ_TIMEOUT", 15*time.Second),
 			WriteTimeout:       r.duration("WRITE_TIMEOUT", 15*time.Second),
 			IdleTimeout:        r.duration("IDLE_TIMEOUT", 60*time.Second),

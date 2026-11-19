@@ -172,8 +172,8 @@ func newAuthEnv(t *testing.T, appSecret string) *authEnv {
 	auth := NewAuthHandler(svc, true, time.Hour)
 	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
 	app.Use(middleware.RequireTrustedOrigin([]string{testOrigin}))
+	auth.Register(app.Group("/api"))
 	api := app.Group("/api/v1")
-	auth.Register(api)
 	api.Post("/protected", auth.RequireSession, func(c *fiber.Ctx) error {
 		p, _ := middleware.PrincipalFrom(c)
 		return c.JSON(p)
@@ -197,7 +197,7 @@ func (e *authEnv) do(t *testing.T, method, path, body, cookie string) *http.Resp
 // start runs /auth/sso/start, records the PKCE challenge in the fake Central
 // and returns the state.
 func (e *authEnv) start(t *testing.T) string {
-	resp := e.do(t, http.MethodGet, "/api/v1/auth/sso/start", "", "")
+	resp := e.do(t, http.MethodGet, "/api/auth/sso/start", "", "")
 	require.Equal(t, http.StatusFound, resp.StatusCode)
 	loc, err := url.Parse(resp.Header.Get("Location"))
 	require.NoError(t, err)
@@ -243,7 +243,7 @@ func TestSSO_ApprovedLogin(t *testing.T) {
 	env := newAuthEnv(t, testSecret)
 	state := env.start(t)
 
-	resp := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(state, "good-code", ""), "")
+	resp := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(state, "good-code", ""), "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	cookie := sessionCookie(resp)
 	require.NotNil(t, cookie)
@@ -259,10 +259,10 @@ func TestSSO_ApprovedLogin(t *testing.T) {
 	raw, _ = io.ReadAll(resp.Body)
 	assert.JSONEq(t, `{"UserID":"`+testUserID+`","Role":"user"}`, string(raw))
 
-	resp = env.do(t, http.MethodGet, "/api/v1/auth/me", "", cookie.Value)
+	resp = env.do(t, http.MethodGet, "/api/auth/me", "", cookie.Value)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = env.do(t, http.MethodPost, "/api/v1/auth/refresh", "", cookie.Value)
+	resp = env.do(t, http.MethodPost, "/api/auth/refresh", "", cookie.Value)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.NotNil(t, sessionCookie(resp), "refresh rotates the cookie")
 	assert.Equal(t, 1, env.central.refreshed)
@@ -271,13 +271,13 @@ func TestSSO_ApprovedLogin(t *testing.T) {
 func TestSSO_PendingAndDeniedResults(t *testing.T) {
 	env := newAuthEnv(t, testSecret)
 
-	resp := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(env.start(t), "", "pending"), "")
+	resp := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(env.start(t), "", "pending"), "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	raw, _ := io.ReadAll(resp.Body)
 	assert.JSONEq(t, `{"status":"pending"}`, string(raw))
 	assert.Nil(t, sessionCookie(resp))
 
-	resp = env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(env.start(t), "", "denied"), "")
+	resp = env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(env.start(t), "", "denied"), "")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	assert.Equal(t, "ACCOUNT_REJECTED", errorReason(t, resp))
 }
@@ -286,7 +286,7 @@ func TestSSO_PendingMembershipIsRefusedAndDiscarded(t *testing.T) {
 	env := newAuthEnv(t, testSecret)
 	env.store.member.Status = model.MemberPending
 
-	resp := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
+	resp := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	assert.Equal(t, "ACCOUNT_PENDING_APPROVAL", errorReason(t, resp))
 	assert.Equal(t, 1, env.central.discarded, "the fresh Central session is revoked")
@@ -296,20 +296,20 @@ func TestSSO_ReplayedStateIsRejected(t *testing.T) {
 	env := newAuthEnv(t, testSecret)
 	state := env.start(t)
 
-	first := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(state, "good-code", ""), "")
+	first := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(state, "good-code", ""), "")
 	require.Equal(t, http.StatusOK, first.StatusCode)
 
-	replay := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(state, "good-code", ""), "")
+	replay := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(state, "good-code", ""), "")
 	assert.Equal(t, http.StatusUnauthorized, replay.StatusCode)
 	assert.Equal(t, "INVALID_SSO_STATE", errorReason(t, replay))
 
-	unknown := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody("never-issued", "good-code", ""), "")
+	unknown := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody("never-issued", "good-code", ""), "")
 	assert.Equal(t, http.StatusUnauthorized, unknown.StatusCode)
 }
 
 func TestSSO_WrongIntrospectionSecretFailsClosed(t *testing.T) {
 	env := newAuthEnv(t, "a-different-secret-that-is-also-32-chars-long")
-	resp := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
+	resp := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
 	require.Equal(t, http.StatusOK, resp.StatusCode, "login itself does not introspect")
 	cookie := sessionCookie(resp)
 	require.NotNil(t, cookie)
@@ -324,11 +324,11 @@ func TestSSO_WrongIntrospectionSecretFailsClosed(t *testing.T) {
 
 func TestSSO_CentralLogoutRevokesSession(t *testing.T) {
 	env := newAuthEnv(t, testSecret)
-	resp := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
+	resp := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
 	cookie := sessionCookie(resp)
 	require.NotNil(t, cookie)
 
-	resp = env.do(t, http.MethodPost, "/api/v1/auth/logout", "", cookie.Value)
+	resp = env.do(t, http.MethodPost, "/api/auth/logout", "", cookie.Value)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	raw, _ := io.ReadAll(resp.Body)
 	assert.JSONEq(t, `{"centralLogoutRequired":true}`, string(raw))
@@ -337,13 +337,13 @@ func TestSSO_CentralLogoutRevokesSession(t *testing.T) {
 	env.central.mu.Lock()
 	env.central.sidActive = false // user confirmed logout on sso-balai
 	env.central.mu.Unlock()
-	resp = env.do(t, http.MethodGet, "/api/v1/auth/me", "", cookie.Value)
+	resp = env.do(t, http.MethodGet, "/api/auth/me", "", cookie.Value)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
 func TestSSO_RoleChangeIsStale(t *testing.T) {
 	env := newAuthEnv(t, testSecret)
-	resp := env.do(t, http.MethodPost, "/api/v1/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
+	resp := env.do(t, http.MethodPost, "/api/auth/sso/exchange", exchangeBody(env.start(t), "good-code", ""), "")
 	cookie := sessionCookie(resp)
 	require.NotNil(t, cookie)
 
@@ -355,7 +355,7 @@ func TestSSO_RoleChangeIsStale(t *testing.T) {
 
 func TestSSO_MeWithoutCookieIs204(t *testing.T) {
 	env := newAuthEnv(t, testSecret)
-	resp := env.do(t, http.MethodGet, "/api/v1/auth/me", "", "")
+	resp := env.do(t, http.MethodGet, "/api/auth/me", "", "")
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 	assert.Equal(t, 0, env.central.introspect)
 }
@@ -367,7 +367,7 @@ func TestSSO_LogoutRedirectSanitizesCancelReturn(t *testing.T) {
 		"//evil.example/x":     "",
 		"https://evil.example": "",
 	} {
-		resp := env.do(t, http.MethodGet, "/api/v1/auth/sso/logout?cancel_return="+url.QueryEscape(in), "", "")
+		resp := env.do(t, http.MethodGet, "/api/auth/sso/logout?cancel_return="+url.QueryEscape(in), "", "")
 		require.Equal(t, http.StatusFound, resp.StatusCode)
 		loc, _ := url.Parse(resp.Header.Get("Location"))
 		assert.Equal(t, "/logout", loc.Path)

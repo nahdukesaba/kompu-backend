@@ -25,7 +25,7 @@ type Routes struct {
 //	PUT    /releases/:id                 auth
 //	DELETE /releases/:id                 auth
 //	POST   /releases/generate-caption    auth, then rateLimit
-//	       /auth/...                     sso-balai browser SSO (see AuthHandler.Register)
+//	/api/auth/...                         sso-balai browser SSO (see AuthHandler.Register)
 //
 // auth is the session middleware (AuthHandler.RequireSession). It is applied
 // to mutations only; reads stay public. rateLimit runs after auth so it can
@@ -35,7 +35,9 @@ func RegisterRoutes(app *fiber.App, r Routes, auth, rateLimit fiber.Handler) {
 
 	r.Health.Register(api)
 	if r.Auth != nil {
-		r.Auth.Register(api)
+		// /api/auth/*, not /api/v1: sso-balai registers Kompu's launch URL as
+		// {host}/api/auth/sso/start, like SILAPET and Klinik.
+		r.Auth.Register(app.Group("/api"))
 	}
 	r.Uploads.Register(api, auth)
 	r.Jobs.Register(api, auth)
