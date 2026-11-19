@@ -151,6 +151,7 @@ func (s *SSOService) LogoutURL(cancelReturn string) (string, error) {
 	q := u.Query()
 	q.Set("client_id", s.cfg.ClientID)
 	q.Set("post_logout_redirect_uri", s.cfg.PostLogoutRedirectURI)
+	q.Set("immediate", "1")
 	if v := sanitizeReturnPath(cancelReturn); v != "" {
 		q.Set("cancel_return", v)
 	}

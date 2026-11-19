@@ -71,6 +71,7 @@ func (h *AuthHandler) start(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) logoutStart(c *fiber.Ctx) error {
+	h.clearCookie(c)
 	u, err := h.sso.LogoutURL(c.Query("cancel_return"))
 	if err != nil {
 		return err
@@ -118,9 +119,8 @@ func (h *AuthHandler) refresh(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"user": login.Member})
 }
 
-// logout never clears the cookie: Cancel on sso-balai keeps the session, and
-// Confirm revokes the sid so the next /auth/me clears it.
 func (h *AuthHandler) logout(c *fiber.Ctx) error {
+	h.clearCookie(c)
 	return c.JSON(fiber.Map{"centralLogoutRequired": true})
 }
 
