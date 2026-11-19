@@ -332,7 +332,9 @@ func TestSSO_CentralLogoutRevokesSession(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	raw, _ := io.ReadAll(resp.Body)
 	assert.JSONEq(t, `{"centralLogoutRequired":true}`, string(raw))
-	assert.Nil(t, sessionCookie(resp), "cookie kept until Central decides")
+	clearedCookie := sessionCookie(resp)
+	require.NotNil(t, clearedCookie, "cookie is cleared immediately")
+	assert.Empty(t, clearedCookie.Value)
 
 	env.central.mu.Lock()
 	env.central.sidActive = false // user confirmed logout on sso-balai
