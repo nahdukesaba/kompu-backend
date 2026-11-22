@@ -6,32 +6,27 @@ import "github.com/gofiber/fiber/v2"
 type Routes struct {
 	Health   *HealthHandler
 	Uploads  *UploadHandler
-	Jobs     *JobHandler
-	Releases *ReleaseHandler
+	Items    *ItemHandler
 	Captions *CaptionHandler
 	Auth     *AuthHandler // optional: nil in route tests
-	Files    *FileHandler // optional: only when files live in OneDrive
+	Files    *FileHandler // optional: only when OneDrive is configured
 }
 
 // RegisterRoutes mounts the whole API under /api/v1.
 //
 //	GET    /health                       public
 //	POST   /uploads/presigned-url        auth
-//	GET    /jobs, /jobs/:id              public
-//	POST   /jobs                         auth
-//	PUT    /jobs/:id                     auth
-//	DELETE /jobs/:id                     auth   (?cleanup_files=true)
-//	GET    /releases, /releases/:id      public
-//	POST   /releases                     auth
-//	PUT    /releases/:id                 auth
-//	DELETE /releases/:id                 auth
-//	POST   /releases/generate-caption    auth, then rateLimit
-//	GET    /files/<key>                  public, 302 to OneDrive (when enabled)
-//	/api/auth/...                         sso-balai browser SSO (see AuthHandler.Register)
+//	GET    /files/<key>                  auth (?thumb=1 for a same-origin image)
+//	GET    /channels, /holidays, /people auth
+//	GET    /reports                      auth
+//	*      /items...                     auth (see ItemHandler.Register)
+//	POST   /captions/generate            auth, then rateLimit
+//	POST   /captions/objective           auth, then rateLimit
+//	/api/auth/...                        sso-balai browser SSO (see AuthHandler.Register)
 //
-// auth is the session middleware (AuthHandler.RequireSession). It is applied
-// to mutations only; reads stay public. rateLimit runs after auth so it can
-// key on the authenticated user.
+// auth is the session middleware (AuthHandler.RequireSession). Only health and
+// the sign-in routes are public: items hold transcripts and staff names.
+// rateLimit runs after auth so it can key on the authenticated user.
 func RegisterRoutes(app *fiber.App, r Routes, auth, rateLimit fiber.Handler) {
 	api := app.Group("/api/v1")
 
@@ -42,10 +37,15 @@ func RegisterRoutes(app *fiber.App, r Routes, auth, rateLimit fiber.Handler) {
 		r.Auth.Register(app.Group("/api"))
 	}
 	if r.Files != nil {
-		r.Files.Register(api)
+		r.Files.Register(api, auth)
 	}
 	r.Uploads.Register(api, auth)
-	r.Jobs.Register(api, auth)
-	r.Releases.Register(api, auth)
+	r.Items.Register(api, auth)
 	r.Captions.Register(api, auth, rateLimit)
+}
+
+func withMiddleware(mw []fiber.Handler, final fiber.Handler) []fiber.Handler {
+	out := make([]fiber.Handler, 0, len(mw)+1)
+	out = append(out, mw...)
+	return append(out, final)
 }

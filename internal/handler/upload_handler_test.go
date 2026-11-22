@@ -53,11 +53,11 @@ func TestCreatePresignedURL_Success(t *testing.T) {
 		MaxBytes:  10 << 20,
 	}}
 
-	resp := postJSON(t, newUploadTestApp(svc), `{"resource":"jobs","content_type":"application/pdf","size":2048}`)
+	resp := postJSON(t, newUploadTestApp(svc), `{"content_type":"application/pdf","size":2048}`)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
-	assert.Equal(t, service.UploadRequest{Resource: "jobs", ContentType: "application/pdf", Size: 2048}, svc.gotReq)
+	assert.Equal(t, service.UploadRequest{ContentType: "application/pdf", Size: 2048}, svc.gotReq)
 
 	var out presignResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
@@ -75,11 +75,10 @@ func TestCreatePresignedURL_Errors(t *testing.T) {
 		wantStatus int
 	}{
 		{"malformed JSON", `{not json`, nil, http.StatusBadRequest},
-		{"file too large", `{"resource":"jobs","content_type":"application/pdf","size":99999999}`, service.ErrFileTooLarge, http.StatusRequestEntityTooLarge},
-		{"unsupported type", `{"resource":"jobs","content_type":"text/html","size":10}`, service.ErrUnsupportedContentType, http.StatusUnsupportedMediaType},
-		{"invalid resource", `{"resource":"x","content_type":"image/png","size":10}`, service.ErrInvalidResource, http.StatusBadRequest},
-		{"invalid size", `{"resource":"jobs","content_type":"image/png","size":0}`, service.ErrInvalidFileSize, http.StatusBadRequest},
-		{"storage failure", `{"resource":"jobs","content_type":"image/png","size":10}`, errors.New("s3 down"), http.StatusInternalServerError},
+		{"file too large", `{"content_type":"application/pdf","size":99999999}`, service.ErrFileTooLarge, http.StatusRequestEntityTooLarge},
+		{"unsupported type", `{"content_type":"text/html","size":10}`, service.ErrUnsupportedContentType, http.StatusUnsupportedMediaType},
+		{"invalid size", `{"content_type":"image/png","size":0}`, service.ErrInvalidFileSize, http.StatusBadRequest},
+		{"storage failure", `{"content_type":"image/png","size":10}`, errors.New("s3 down"), http.StatusInternalServerError},
 	}
 
 	for _, tc := range tests {

@@ -11,6 +11,7 @@ import (
 
 type CaptionService interface {
 	Generate(ctx context.Context, in service.CaptionInput) (*service.CaptionResult, error)
+	GenerateObjective(ctx context.Context, in service.CaptionInput) (*service.CaptionResult, error)
 }
 
 type CaptionHandler struct {
@@ -21,10 +22,28 @@ func NewCaptionHandler(svc CaptionService) *CaptionHandler {
 	return &CaptionHandler{svc: svc}
 }
 
-// Register mounts POST /releases/generate-caption. Pass the SSO middleware
-// first, then a rate limiter, as mw.
+// Register mounts POST /captions/generate and /captions/objective. Pass the
+// SSO middleware first, then a rate limiter, as mw.
 func (h *CaptionHandler) Register(r fiber.Router, mw ...fiber.Handler) {
-	r.Post("/releases/generate-caption", withMiddleware(mw, h.Generate)...)
+	r.Post("/captions/generate", withMiddleware(mw, h.Generate)...)
+	r.Post("/captions/objective", withMiddleware(mw, h.Objective)...)
+}
+
+// Objective drafts a quarterly report's "Maksud dan Tujuan".
+func (h *CaptionHandler) Objective(c *fiber.Ctx) error {
+	if _, err := actorID(c); err != nil {
+		return err
+	}
+	var req captionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	res, err := h.svc.GenerateObjective(c.UserContext(), service.CaptionInput{Notes: req.Notes, Title: req.Title})
+	if err != nil {
+		return mapCaptionError(err)
+	}
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	return c.JSON(fiber.Map{"objective": res.Caption})
 }
 
 type captionRequest struct {

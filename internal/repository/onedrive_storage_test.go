@@ -15,7 +15,10 @@ import (
 	"kompu-backend/internal/model"
 )
 
-const testKey = "jobs/2026/11/0123456789abcdef0123456789abcdef.pdf"
+const (
+	testKey      = "items/2026/11/0123456789abcdef0123456789abcdef.jpg"
+	testKeyAsDoc = "items/2026/11/0123456789abcdef0123456789abcdef.pdf"
+)
 
 func TestOneDriveStorage(t *testing.T) {
 	var itemGets int32
@@ -30,6 +33,9 @@ func TestOneDriveStorage(t *testing.T) {
 			assert.Equal(t, "Bearer at", r.Header.Get("Authorization"))
 			assert.Equal(t, "/me/drive/root:/db/kompu/"+testKey+":/createUploadSession", r.URL.Path)
 			_, _ = io.WriteString(w, `{"uploadUrl":"https://upload.example/session"}`)
+		case r.URL.Path == "/me/drive/root:/db/kompu/"+testKey+":/thumbnails/0/c1280x1280/content":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = io.WriteString(w, "thumb")
 		case r.Method == http.MethodGet && r.URL.Path == "/me/drive/root:/db/kompu/"+testKey:
 			atomic.AddInt32(&itemGets, 1)
 			_, _ = io.WriteString(w, `{"@microsoft.graph.downloadUrl":"https://dl.example/file"}`)
@@ -54,10 +60,6 @@ func TestOneDriveStorage(t *testing.T) {
 	assert.Equal(t, "https://upload.example/session", grant.URL)
 	assert.Equal(t, map[string]string{"Content-Range": "bytes 0-999/1000"}, grant.Headers)
 
-	u, err := s.PresignGet(ctx, "bucket", testKey, 0)
-	require.NoError(t, err)
-	assert.Equal(t, "/api/v1/files/"+testKey, u)
-
 	for range 2 { // second call is served from the cache
 		link, err := s.DownloadURL(ctx, testKey)
 		require.NoError(t, err)
@@ -65,19 +67,29 @@ func TestOneDriveStorage(t *testing.T) {
 	}
 	assert.EqualValues(t, 1, atomic.LoadInt32(&itemGets))
 
-	require.NoError(t, s.DeleteObject(ctx, "bucket", testKey), "a missing file counts as deleted")
+	body, contentType, err := s.Thumbnail(ctx, testKey)
+	require.NoError(t, err)
+	got, _ := io.ReadAll(body)
+	body.Close()
+	assert.Equal(t, "thumb", string(got))
+	assert.Equal(t, "image/jpeg", contentType)
+
+	_, _, err = s.Thumbnail(ctx, testKeyAsDoc)
+	require.Error(t, err, "only image keys get a thumbnail")
+
+	require.NoError(t, s.DeleteObject(ctx, testKey), "a missing file counts as deleted")
 
 	_, err = s.DownloadURL(ctx, "../../secret.pdf")
 	require.Error(t, err)
 }
 
 func TestValidObjectKey(t *testing.T) {
-	assert.True(t, ValidObjectKey(testKey))
-	assert.True(t, ValidObjectKey("releases/2026/01/0123456789abcdef0123456789abcdef.mp4"))
+	assert.True(t, model.ValidObjectKey(testKey))
+	assert.True(t, model.ValidObjectKey("items/2026/01/0123456789abcdef0123456789abcdef.docx"))
 	for _, k := range []string{
-		"", "jobs/../x.pdf", "other/2026/11/0123456789abcdef0123456789abcdef.pdf",
-		"jobs/2026/11/0123456789abcdef0123456789abcdef.exe", "/jobs/2026/11/0123456789abcdef0123456789abcdef.pdf",
+		"", "items/../x.pdf", "jobs/2026/11/0123456789abcdef0123456789abcdef.pdf",
+		"items/2026/11/0123456789abcdef0123456789abcdef.exe", "/items/2026/11/0123456789abcdef0123456789abcdef.pdf",
 	} {
-		assert.False(t, ValidObjectKey(k), k)
+		assert.False(t, model.ValidObjectKey(k), k)
 	}
 }

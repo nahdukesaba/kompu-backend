@@ -25,18 +25,23 @@ func (f *fakeCaptionService) Generate(_ context.Context, in service.CaptionInput
 	return f.res, f.err
 }
 
+func (f *fakeCaptionService) GenerateObjective(_ context.Context, in service.CaptionInput) (*service.CaptionResult, error) {
+	f.called, f.gotIn = true, in
+	return f.res, f.err
+}
+
 func newCaptionTestApp(svc CaptionService, mw ...fiber.Handler) *fiber.App {
 	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
 	NewCaptionHandler(svc).Register(app.Group("/api/v1"), mw...)
 	return app
 }
 
-const captionURL = "/api/v1/releases/generate-caption"
+const captionURL = "/api/v1/captions/generate"
 
 func TestCaptionHandler_Success(t *testing.T) {
 	svc := &fakeCaptionService{res: &service.CaptionResult{Caption: "Halo petani!", Platform: "instagram", GuidelineApplied: true}}
 
-	resp := doJobRequest(t, newCaptionTestApp(svc, asUser("user-1")), http.MethodPost, captionURL,
+	resp := doRequest(t, newCaptionTestApp(svc, asUser("user-1")), http.MethodPost, captionURL,
 		`{"notes":"Penyuluhan di Deli Serdang","platform":"instagram","title":"Jajar legowo"}`)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -51,13 +56,13 @@ func TestCaptionHandler_Success(t *testing.T) {
 
 func TestCaptionHandler_RequiresAuthenticatedUser(t *testing.T) {
 	svc := &fakeCaptionService{}
-	resp := doJobRequest(t, newCaptionTestApp(svc), http.MethodPost, captionURL, `{"notes":"x"}`) // no middleware
+	resp := doRequest(t, newCaptionTestApp(svc), http.MethodPost, captionURL, `{"notes":"x"}`) // no middleware
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.False(t, svc.called)
 }
 
 func TestCaptionHandler_InvalidBody(t *testing.T) {
-	resp := doJobRequest(t, newCaptionTestApp(&fakeCaptionService{}, asUser("u")), http.MethodPost, captionURL, `{broken`)
+	resp := doRequest(t, newCaptionTestApp(&fakeCaptionService{}, asUser("u")), http.MethodPost, captionURL, `{broken`)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
@@ -76,7 +81,7 @@ func TestCaptionHandler_ErrorMapping(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &fakeCaptionService{err: tc.err}
-			resp := doJobRequest(t, newCaptionTestApp(svc, asUser("u")), http.MethodPost, captionURL, `{"notes":"x"}`)
+			resp := doRequest(t, newCaptionTestApp(svc, asUser("u")), http.MethodPost, captionURL, `{"notes":"x"}`)
 			assert.Equal(t, tc.wantStatus, resp.StatusCode)
 
 			out := decodeJSON[struct {

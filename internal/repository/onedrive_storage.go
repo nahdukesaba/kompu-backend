@@ -10,7 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"regexp"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -62,13 +62,6 @@ const (
 	FilesRoute = "/api/v1/files/"
 )
 
-// objectKeyPattern matches the keys StorageService generates; the public
-// /files route accepts nothing else, so it cannot reach other OneDrive paths.
-var objectKeyPattern = regexp.MustCompile(`^(jobs|releases)/[0-9]{4}/[0-9]{2}/[0-9a-f]{32}\.(jpg|png|webp|pdf|mp4)$`)
-
-// ValidObjectKey reports whether key is a Kompu upload key.
-func ValidObjectKey(key string) bool { return objectKeyPattern.MatchString(key) }
-
 func NewOneDriveStorage(cfg OneDriveConfig, db *pgxpool.Pool) (*OneDriveStorage, error) {
 	if cfg.TenantID == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return nil, errors.New("onedrive storage: MS_TENANT_ID, MS_CLIENT_ID and MS_CLIENT_SECRET are required")
@@ -109,14 +102,9 @@ func (s *OneDriveStorage) PresignPut(ctx context.Context, in model.PresignPutInp
 	}, nil
 }
 
-// PresignGet returns the API's own redirect URL; no Graph call happens here.
-func (s *OneDriveStorage) PresignGet(_ context.Context, _, key string, _ time.Duration) (string, error) {
-	return FilesRoute + key, nil
-}
-
 // DownloadURL resolves key to Graph's short-lived pre-authenticated link.
 func (s *OneDriveStorage) DownloadURL(ctx context.Context, key string) (string, error) {
-	if !ValidObjectKey(key) {
+	if !model.ValidObjectKey(key) {
 		return "", errors.New("invalid object key")
 	}
 	s.urlMu.Lock()
@@ -143,7 +131,7 @@ func (s *OneDriveStorage) DownloadURL(ctx context.Context, key string) (string, 
 
 // DeleteObject removes the file (OneDrive keeps it in its recycle bin).
 // A missing file counts as deleted.
-func (s *OneDriveStorage) DeleteObject(ctx context.Context, _, key string) error {
+func (s *OneDriveStorage) DeleteObject(ctx context.Context, key string) error {
 	s.urlMu.Lock()
 	delete(s.urlCache, key)
 	s.urlMu.Unlock()
@@ -154,38 +142,55 @@ func (s *OneDriveStorage) DeleteObject(ctx context.Context, _, key string) error
 	return err
 }
 
-// Upload writes r (size bytes) to key from the server, for copying existing
-// files. An existing file at key is left as is (returns ErrObjectExists).
-func (s *OneDriveStorage) Upload(ctx context.Context, key string, r io.Reader, size int64) error {
-	grant, err := s.PresignPut(ctx, model.PresignPutInput{Key: key, Size: size})
-	if err != nil {
-		if strings.Contains(err.Error(), "HTTP 409") {
-			return ErrObjectExists
-		}
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, grant.URL, r)
-	if err != nil {
-		return err
-	}
-	req.ContentLength = size
-	for k, v := range grant.Headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := s.client.Do(req) // pre-authenticated URL: no Authorization header
-	if err != nil {
-		return fmt.Errorf("upload: %w", err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("upload: HTTP %d", resp.StatusCode)
-	}
-	return nil
-}
+var imageTypes = map[string]string{".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
-// ErrObjectExists means Upload found a file already at the key.
-var ErrObjectExists = errors.New("object already exists")
+// Thumbnail streams a report-sized image (at most 1280 px), falling back to
+// the original when Graph has no thumbnail. Only image keys are served, with
+// a type fixed by the extension, so an upload cannot run as a page here.
+func (s *OneDriveStorage) Thumbnail(ctx context.Context, key string) (io.ReadCloser, string, error) {
+	contentType, ok := imageTypes[path.Ext(key)]
+	if !ok || !model.ValidObjectKey(key) {
+		return nil, "", errors.New("not an image key")
+	}
+	tok, err := s.accessToken(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		s.graphBase+s.itemPath(key)+":/thumbnails/0/c1280x1280/content", nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := s.client.Do(req) // Go drops Authorization on the cross-host redirect
+	if err == nil && resp.StatusCode == http.StatusOK {
+		if strings.HasPrefix(resp.Header.Get("Content-Type"), "image/jpeg") {
+			contentType = "image/jpeg"
+		}
+		return resp.Body, contentType, nil
+	}
+	if err == nil {
+		resp.Body.Close()
+	}
+
+	link, err := s.DownloadURL(ctx, key)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err = s.client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download original: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, "", fmt.Errorf("download original: HTTP %d", resp.StatusCode)
+	}
+	return resp.Body, contentType, nil
+}
 
 var errGraphNotFound = errors.New("graph: not found")
 
