@@ -117,6 +117,26 @@ func TestItemCreate_NormalizesAndDefaults(t *testing.T) {
 	assert.Equal(t, "user-1", got.CreatedBy)
 }
 
+func TestItemCreate_OtherKeepsOnlyGeneralFields(t *testing.T) {
+	store := &fakeItemStore{}
+	in := publicationInput()
+	in.Kind = model.KindOther
+	in.Status = "in_progress"
+	in.Location, in.Caption = "must be cleared", "must be cleared"
+	_, err := NewItemService(store, nil).Create(context.Background(), "u", in)
+	require.NoError(t, err)
+
+	got := store.created[0]
+	assert.Equal(t, "in_progress", got.Status)
+	assert.Empty(t, got.Category)
+	assert.Empty(t, got.Location)
+	assert.Empty(t, got.Caption)
+
+	in.Status = "unknown"
+	_, err = NewItemService(&fakeItemStore{}, nil).Create(context.Background(), "u", in)
+	require.ErrorContains(t, err, "status must be")
+}
+
 func TestItemCreate_SplitDaily(t *testing.T) {
 	store := &fakeItemStore{}
 	in := publicationInput()
@@ -186,6 +206,8 @@ func TestAddFiles_SlotMustFitKind(t *testing.T) {
 		{"proof on publication", model.KindPublication, FileInput{Slot: model.SlotPostProof, ChannelCode: &ig, Key: key, Name: "a.jpg"}, ""},
 		{"result on publication", model.KindPublication, FileInput{Slot: model.SlotResult, Key: key, Name: "a.jpg"}, "not valid"},
 		{"post proof on documentation", model.KindDocumentation, FileInput{Slot: model.SlotPostProof, ChannelCode: &ig, Key: key, Name: "a.jpg"}, "not valid"},
+		{"result on other", model.KindOther, FileInput{Slot: model.SlotResult, Key: key, Name: "a.jpg"}, ""},
+		{"post proof on other", model.KindOther, FileInput{Slot: model.SlotPostProof, ChannelCode: &ig, Key: key, Name: "a.jpg"}, "not valid"},
 		{"proof without channel", model.KindPublication, FileInput{Slot: model.SlotPostProof, Key: key, Name: "a.jpg"}, "channel_code is required"},
 		{"unknown channel", model.KindPublication, FileInput{Slot: model.SlotPostProof, ChannelCode: &unknown, Key: key, Name: "a.jpg"}, "unknown channel"},
 		{"foreign key", model.KindDocumentation, FileInput{Slot: model.SlotResult, Key: "../secret.jpg", Name: "a.jpg"}, "not a valid upload key"},

@@ -2,10 +2,11 @@ package model
 
 import "time"
 
-// Item kinds: the two big parts of Kompu's work.
+// Item kinds: Kompu's work.
 const (
 	KindDocumentation = "documentation"
 	KindPublication   = "publication"
+	KindOther         = "other" // unpublished work such as staff cards and banners
 )
 
 // File slots.

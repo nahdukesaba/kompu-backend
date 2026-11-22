@@ -253,6 +253,8 @@ func (s *ItemService) AddFiles(ctx context.Context, actor, id string, in []FileI
 		case current.Kind == model.KindDocumentation &&
 			(f.Slot == model.SlotReport || f.Slot == model.SlotCaptureProof || f.Slot == model.SlotResult):
 			f.ChannelCode = nil
+		case current.Kind == model.KindOther && f.Slot == model.SlotResult:
+			f.ChannelCode = nil
 		case current.Kind == model.KindPublication && f.Slot == model.SlotPostProof:
 			if f.ChannelCode == nil {
 				p.add("files[%d].channel_code is required for post_proof", i)
@@ -382,8 +384,16 @@ func (s *ItemService) normalize(ctx context.Context, in ItemInput) (*model.Item,
 				it.DocumentationID = &docID
 			}
 		}
+	case model.KindOther:
+		it.Status = strings.TrimSpace(in.Status)
+		if it.Status == "" {
+			it.Status = "not_started"
+		}
+		if !itemStatuses[it.Status] {
+			p.add("status must be one of: %s", strings.Join(sortedKeys(itemStatuses), ", "))
+		}
 	default:
-		p.add("kind must be documentation or publication")
+		p.add("kind must be documentation, publication, or other")
 	}
 	if err := p.err(); err != nil {
 		return nil, err
