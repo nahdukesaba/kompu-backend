@@ -64,7 +64,7 @@ func main() {
 	// Credentials: the session is an HttpOnly cookie, so the allowlist must be explicit.
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     strings.Join(cfg.App.CORSAllowedOrigins, ","),
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowHeaders:     "Origin,Content-Type,Accept",
 		AllowCredentials: true,
 	}))
@@ -97,26 +97,30 @@ func main() {
 
 // newRoutes builds every repository, service and handler.
 func newRoutes(cfg *config.Config, pool *pgxpool.Pool) (handler.Routes, error) {
-	objectStorage, err := repository.NewS3Storage(repository.S3StorageConfig{
-		Endpoint:        cfg.Storage.Endpoint,
-		Region:          cfg.Storage.Region,
-		AccessKeyID:     cfg.Storage.AccessKeyID,
-		SecretAccessKey: cfg.Storage.SecretAccessKey,
-	})
-	if err != nil {
-		return handler.Routes{}, fmt.Errorf("storage: %w", err)
+	var objectStorage service.ObjectStorage
+	var files *handler.FileHandler
+	if cfg.Storage.OneDriveEnabled() {
+		od, err := repository.NewOneDriveStorage(repository.OneDriveConfig{
+			TenantID:     cfg.Storage.MSTenantID,
+			ClientID:     cfg.Storage.MSClientID,
+			ClientSecret: cfg.Storage.MSClientSecret,
+			RefreshToken: cfg.Storage.MSRefreshToken,
+			Root:         cfg.Storage.OneDriveRoot,
+		}, pool)
+		if err != nil {
+			return handler.Routes{}, fmt.Errorf("storage: %w", err)
+		}
+		objectStorage, files = od, handler.NewFileHandler(od)
+		log.Printf("file storage: OneDrive %s", cfg.Storage.OneDriveRoot)
+	} else {
+		log.Println("MS_* not set: file uploads are disabled")
 	}
 	storageService := service.NewStorageService(objectStorage, service.StorageServiceConfig{
-		BucketJobs:      cfg.Storage.BucketJobs,
-		BucketReleases:  cfg.Storage.BucketReleases,
-		MaxJobBytes:     cfg.Storage.MaxJobFileBytes,
-		MaxReleaseBytes: cfg.Storage.MaxReleaseFileBytes,
-		PresignExpiry:   cfg.Storage.PresignExpiry,
-		DownloadExpiry:  cfg.Storage.DownloadExpiry,
+		MaxBytes:      cfg.Storage.MaxFileBytes,
+		PresignExpiry: cfg.Storage.PresignExpiry,
 	})
 
-	jobService := service.NewJobService(repository.NewJobRepository(pool), storageService)
-	releaseService := service.NewReleaseService(repository.NewReleaseRepository(pool))
+	itemService := service.NewItemService(repository.NewItemRepository(pool), storageService)
 
 	// Caption generation stays switched off (503) unless an AI endpoint is configured.
 	var generator service.TextGenerator
@@ -172,9 +176,9 @@ func newRoutes(cfg *config.Config, pool *pgxpool.Pool) (handler.Routes, error) {
 		Auth:     handler.NewAuthHandler(ssoService, cfg.Session.CookieSecure, cfg.Session.TTL),
 		Health:   handler.NewHealthHandler(cfg.App.Name, cfg.App.Env, pool),
 		Uploads:  handler.NewUploadHandler(storageService),
-		Jobs:     handler.NewJobHandler(jobService, storageService),
-		Releases: handler.NewReleaseHandler(releaseService, storageService),
+		Items:    handler.NewItemHandler(itemService),
 		Captions: handler.NewCaptionHandler(captionService),
+		Files:    files,
 	}, nil
 }
 

@@ -32,7 +32,6 @@ func (h *UploadHandler) Register(r fiber.Router, mw ...fiber.Handler) {
 }
 
 type presignRequest struct {
-	Resource    string `json:"resource"`     // "jobs" | "releases"
 	ContentType string `json:"content_type"` // e.g. "application/pdf"
 	Size        int64  `json:"size"`         // bytes
 }
@@ -53,7 +52,6 @@ func (h *UploadHandler) CreatePresignedURL(c *fiber.Ctx) error {
 	}
 
 	grant, err := h.svc.CreateUpload(c.UserContext(), service.UploadRequest{
-		Resource:    req.Resource,
 		ContentType: req.ContentType,
 		Size:        req.Size,
 	})
@@ -79,8 +77,10 @@ func mapUploadError(err error) error {
 		return fiber.NewError(fiber.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, service.ErrUnsupportedContentType):
 		return fiber.NewError(fiber.StatusUnsupportedMediaType, err.Error())
-	case errors.Is(err, service.ErrInvalidResource), errors.Is(err, service.ErrInvalidFileSize):
+	case errors.Is(err, service.ErrInvalidFileSize):
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, service.ErrStorageDisabled):
+		return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
 	default:
 		return err // logged and returned as a generic 500 by ErrorHandler
 	}

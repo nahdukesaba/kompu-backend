@@ -60,16 +60,21 @@ type SessionConfig struct {
 }
 
 type StorageConfig struct {
-	Endpoint            string
-	Region              string
-	BucketJobs          string
-	BucketReleases      string
-	AccessKeyID         string
-	SecretAccessKey     string
-	PresignExpiry       time.Duration
-	MaxJobFileBytes     int64
-	MaxReleaseFileBytes int64
-	DownloadExpiry      time.Duration
+	PresignExpiry time.Duration
+	MaxFileBytes  int64
+
+	// OneDrive (Microsoft Graph, delegated refresh token). Required in
+	// production; without it, development runs with uploads switched off.
+	MSTenantID     string
+	MSClientID     string
+	MSClientSecret string
+	MSRefreshToken string
+	OneDriveRoot   string
+}
+
+// OneDriveEnabled reports whether uploads go to OneDrive.
+func (s StorageConfig) OneDriveEnabled() bool {
+	return s.MSTenantID != "" && s.MSClientID != "" && s.MSClientSecret != ""
 }
 
 type AIConfig struct {
@@ -123,16 +128,13 @@ func Load() (*Config, error) {
 			CookieSecure: r.str("APP_SESSION_COOKIE_SECURE", "true") == "true",
 		},
 		Storage: StorageConfig{
-			Endpoint:            strings.TrimRight(r.str("STORAGE_ENDPOINT", ""), "/"),
-			Region:              r.str("STORAGE_REGION", ""),
-			BucketJobs:          r.str("STORAGE_BUCKET_JOBS", ""),
-			BucketReleases:      r.str("STORAGE_BUCKET_RELEASES", ""),
-			AccessKeyID:         r.str("STORAGE_ACCESS_KEY_ID", ""),
-			SecretAccessKey:     r.str("STORAGE_SECRET_ACCESS_KEY", ""),
-			PresignExpiry:       r.duration("STORAGE_PRESIGN_EXPIRY", 15*time.Minute),
-			MaxJobFileBytes:     r.int64("MAX_JOB_FILE_BYTES", 10*1024*1024),
-			MaxReleaseFileBytes: r.int64("MAX_RELEASE_FILE_BYTES", 50*1024*1024),
-			DownloadExpiry:      r.duration("STORAGE_DOWNLOAD_EXPIRY", time.Hour),
+			PresignExpiry:  r.duration("STORAGE_PRESIGN_EXPIRY", 15*time.Minute),
+			MaxFileBytes:   r.int64("MAX_UPLOAD_BYTES", 50*1024*1024),
+			MSTenantID:     r.str("MS_TENANT_ID", ""),
+			MSClientID:     r.str("MS_CLIENT_ID", ""),
+			MSClientSecret: r.str("MS_CLIENT_SECRET", ""),
+			MSRefreshToken: r.str("MS_REFRESH_TOKEN", ""),
+			OneDriveRoot:   r.str("ONEDRIVE_ROOT", "/db/kompu"),
 		},
 		AI: AIConfig{
 			BaseURL: strings.TrimRight(r.str("AI_BASE_URL", ""), "/"),
@@ -194,6 +196,9 @@ func (c *Config) validate() error {
 			{"SSO_FLOW_HMAC_KEY", c.SSO.FlowHMACKey},
 			{"SSO_INTROSPECTION_SECRET", c.SSO.IntrospectionSecret},
 			{"APP_SESSION_KEY", c.Session.Key},
+			{"MS_TENANT_ID", c.Storage.MSTenantID},
+			{"MS_CLIENT_ID", c.Storage.MSClientID},
+			{"MS_CLIENT_SECRET", c.Storage.MSClientSecret},
 		} {
 			if f.val == "" {
 				errs = append(errs, fmt.Errorf("%s is required in production", f.name))
@@ -214,34 +219,12 @@ func (c *Config) validate() error {
 		errs = append(errs, errors.New("APP_SESSION_TTL must be at least 1m"))
 	}
 
-	// Object storage is required from Phase 4 onward.
-	for _, f := range []struct{ name, val string }{
-		{"STORAGE_ENDPOINT", c.Storage.Endpoint},
-		{"STORAGE_REGION", c.Storage.Region},
-		{"STORAGE_BUCKET_JOBS", c.Storage.BucketJobs},
-		{"STORAGE_BUCKET_RELEASES", c.Storage.BucketReleases},
-		{"STORAGE_ACCESS_KEY_ID", c.Storage.AccessKeyID},
-		{"STORAGE_SECRET_ACCESS_KEY", c.Storage.SecretAccessKey},
-	} {
-		if f.val == "" {
-			errs = append(errs, fmt.Errorf("%s is required", f.name))
-		}
-	}
-	if c.Storage.Endpoint != "" {
-		if u, err := url.Parse(c.Storage.Endpoint); err != nil ||
-			(u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			errs = append(errs, fmt.Errorf("STORAGE_ENDPOINT must be an http(s) URL, got %q", c.Storage.Endpoint))
-		}
-	}
-	if c.Storage.MaxJobFileBytes <= 0 || c.Storage.MaxReleaseFileBytes <= 0 {
-		errs = append(errs, errors.New("MAX_JOB_FILE_BYTES and MAX_RELEASE_FILE_BYTES must be positive"))
+	// Uploads are one PUT to a Graph upload session, limited to 60 MiB.
+	if c.Storage.MaxFileBytes <= 0 || c.Storage.MaxFileBytes > 60*1024*1024 {
+		errs = append(errs, errors.New("MAX_UPLOAD_BYTES must be between 1 and 62914560"))
 	}
 	if c.Storage.PresignExpiry <= 0 || c.Storage.PresignExpiry > time.Hour {
 		errs = append(errs, errors.New("STORAGE_PRESIGN_EXPIRY must be between 1s and 1h"))
-	}
-
-	if c.Storage.DownloadExpiry <= 0 || c.Storage.DownloadExpiry > 24*time.Hour {
-		errs = append(errs, errors.New("STORAGE_DOWNLOAD_EXPIRY must be between 1s and 24h"))
 	}
 
 	if c.AI.APIKey != "" && !c.AI.Enabled() {
