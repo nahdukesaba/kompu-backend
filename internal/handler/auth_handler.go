@@ -47,6 +47,7 @@ func (h *AuthHandler) Register(r fiber.Router) {
 	g.Post("/sso/exchange", h.exchange)
 	g.Get("/sso/logout", h.logoutStart)
 	g.Get("/me", h.me)
+	g.Get("/apps", h.RequireSession, h.apps)
 	g.Post("/refresh", h.refresh)
 	g.Post("/logout", h.RequireSession, h.logout)
 }
@@ -108,6 +109,28 @@ func (h *AuthHandler) me(c *fiber.Ctx) error {
 		return h.fail(c, err)
 	}
 	return c.JSON(fiber.Map{"user": m})
+}
+
+func (h *AuthHandler) apps(c *fiber.Ctx) error {
+	p, ok := middleware.PrincipalFrom(c)
+	if !ok || p == nil || p.UserID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"apps": []model.ApprovedApplication{},
+		})
+	}
+	type approvedAppsProvider interface {
+		ApprovedApps(ctx context.Context, appUserID string) (string, []model.ApprovedApplication)
+	}
+	if provider, ok := h.sso.(approvedAppsProvider); ok {
+		defaultLogo, apps := provider.ApprovedApps(c.UserContext(), p.UserID)
+		return c.JSON(fiber.Map{
+			"defaultLogoUrl": defaultLogo,
+			"apps":           apps,
+		})
+	}
+	return c.JSON(fiber.Map{
+		"apps": []model.ApprovedApplication{},
+	})
 }
 
 func (h *AuthHandler) refresh(c *fiber.Ctx) error {
