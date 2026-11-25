@@ -251,6 +251,29 @@ func (s *SSOService) Authenticate(ctx context.Context, cookie string) (*model.Me
 	return m, nil
 }
 
+// ApprovedApps returns the default logo URL and only the active applications
+// that the authenticated user is approved to access.
+func (s *SSOService) ApprovedApps(ctx context.Context, appUserID string) (string, []model.ApprovedApplication) {
+	defaultLogo := strings.TrimRight(s.cfg.BaseURL, "/") + "/widget/default-logo.png"
+	type approvedAppLister interface {
+		ListApprovedApplications(ctx context.Context, appUserID string) ([]model.ApprovedApplication, error)
+	}
+	lister, ok := s.store.(approvedAppLister)
+	if !ok || strings.TrimSpace(appUserID) == "" {
+		return defaultLogo, []model.ApprovedApplication{}
+	}
+	apps, err := lister.ListApprovedApplications(ctx, strings.TrimSpace(appUserID))
+	if err != nil || apps == nil {
+		return defaultLogo, []model.ApprovedApplication{}
+	}
+	for i := range apps {
+		if strings.TrimSpace(apps[i].LogoURL) == "" {
+			apps[i].LogoURL = defaultLogo
+		}
+	}
+	return defaultLogo, apps
+}
+
 // Refresh rotates the Central tokens, re-checks the membership and keeps the
 // same sid.
 func (s *SSOService) Refresh(ctx context.Context, cookie string) (*Login, error) {

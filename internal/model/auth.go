@@ -25,3 +25,12 @@ type Member struct {
 	Status       string `json:"-"`
 	SessionValid bool   `json:"-"` // the auth.sessions row exists and belongs to this user
 }
+
+// ApprovedApplication represents an active application in the SSO ecosystem
+// that the authenticated user is approved to access.
+type ApprovedApplication struct {
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	LaunchURL string `json:"launchUrl"`
+	LogoURL   string `json:"logoUrl"`
+}

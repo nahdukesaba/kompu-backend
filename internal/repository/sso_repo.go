@@ -69,3 +69,47 @@ func (r *SSORepository) Member(ctx context.Context, appUserID, sessionID string)
 	}
 	return &m, nil
 }
+
+// ListApprovedApplications returns only active applications that the authenticated user is approved to access.
+func (r *SSORepository) ListApprovedApplications(ctx context.Context, appUserID string) ([]model.ApprovedApplication, error) {
+	if r == nil || r.pool == nil || appUserID == "" {
+		return []model.ApprovedApplication{}, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			a.code,
+			a.name,
+			COALESCE(a.launch_url, ''),
+			COALESCE(a.logo_url, '')
+		FROM public.applications a
+		JOIN public.app_users u
+			ON u.id = $1::uuid
+			AND u.deleted_at IS NULL
+		LEFT JOIN public.app_memberships m
+			ON m.application_id = a.id
+			AND m.app_user_id = u.id
+			AND m.deleted_at IS NULL
+		WHERE a.is_active = TRUE
+		  AND COALESCE(BTRIM(a.launch_url), '') <> ''
+		  AND (COALESCE(u.is_sso_admin, false) = TRUE OR m.status = 'approved')
+		ORDER BY a.created_at ASC, a.name ASC
+	`, appUserID)
+	if err != nil {
+		return nil, fmt.Errorf("list approved applications: %w", err)
+	}
+	defer rows.Close()
+
+	apps := make([]model.ApprovedApplication, 0)
+	for rows.Next() {
+		var item model.ApprovedApplication
+		if err := rows.Scan(&item.Code, &item.Name, &item.LaunchURL, &item.LogoURL); err != nil {
+			return nil, fmt.Errorf("scan approved application: %w", err)
+		}
+		apps = append(apps, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate approved applications: %w", err)
+	}
+	return apps, nil
+}
