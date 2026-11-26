@@ -29,7 +29,7 @@ func NewItemRepository(db itemDB) *ItemRepository { return &ItemRepository{db: d
 
 const itemSelectTemplate = `
 SELECT i.id::text, i.kind, i.title, i.start_date::text, i.end_date::text, i.people,
-       i.location, i.objective, %s, i.category, i.status, i.format, i.caption,
+       i.location, i.objective, %s, i.result_link, i.category, i.status, i.format, i.caption,
        i.documentation_id::text,
        COALESCE((SELECT jsonb_object_agg(c.channel_code, c.posted_on::text)
                  FROM public.kompu_item_channels c WHERE c.item_id = i.id), '{}'::jsonb),
