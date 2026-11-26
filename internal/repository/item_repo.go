@@ -51,7 +51,7 @@ func scanItem(row pgx.Row) (*model.Item, error) {
 	var it model.Item
 	var channels, files []byte
 	if err := row.Scan(&it.ID, &it.Kind, &it.Title, &it.StartDate, &it.EndDate, &it.People,
-		&it.Location, &it.Objective, &it.ReportText, &it.Category, &it.Status, &it.Format, &it.Caption,
+		&it.Location, &it.Objective, &it.ReportText, &it.ResultLink, &it.Category, &it.Status, &it.Format, &it.Caption,
 		&it.DocumentationID, &channels, &files,
 		&it.CreatedAt, &it.CreatedBy, &it.UpdatedAt, &it.UpdatedBy); err != nil {
 		return nil, err
@@ -177,6 +177,24 @@ func (r *ItemRepository) Reschedule(ctx context.Context, id, start, end, actor s
 		return nil, model.ErrNotFound
 	}
 	return r.Get(ctx, id)
+}
+
+// SetResultLink saves or clears a documentation's SharePoint folder. A link is
+// refused while result files exist; that case reads as not found.
+func (r *ItemRepository) SetResultLink(ctx context.Context, id, link, actor string) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE public.kompu_items i SET result_link = $2, updated_by = $3
+		WHERE i.id = $1::text::uuid AND i.kind = 'documentation' AND i.deleted_at IS NULL
+		  AND ($2 = '' OR NOT EXISTS (
+			SELECT 1 FROM public.kompu_item_files f WHERE f.item_id = i.id AND f.slot = 'result'))`,
+		id, link, actor)
+	if err != nil {
+		return fmt.Errorf("set result link: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return model.ErrNotFound
+	}
+	return nil
 }
 
 // SetChannel marks a publication as posted on a channel.

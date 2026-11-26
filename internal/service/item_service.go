@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -41,6 +42,7 @@ const (
 	maxSplitDays        = 62
 	maxRangeDays        = 400
 	maxFilesPerRequest  = 50
+	maxResultLinkLen    = 2000
 )
 
 // wib is Medan's time zone; "today" for a post is the office's date.
@@ -55,6 +57,7 @@ type ItemStore interface {
 	Update(ctx context.Context, it *model.Item) (*model.Item, error)
 	Reschedule(ctx context.Context, id, start, end, actor string) (*model.Item, error)
 	SetChannel(ctx context.Context, id, code, postedOn, actor string) error
+	SetResultLink(ctx context.Context, id, link, actor string) error
 	UnsetChannel(ctx context.Context, id, code, actor string) error
 	AddFiles(ctx context.Context, id, actor string, files []model.ItemFile) error
 	DeleteFile(ctx context.Context, id, fileID, actor string) (string, error)
@@ -227,6 +230,51 @@ func (s *ItemService) SetChannel(ctx context.Context, actor, id, code string, po
 	return s.store.Get(ctx, id)
 }
 
+// SetResultLink stores a SharePoint folder as a documentation's results. An
+// empty link clears it, which allows uploads again.
+func (s *ItemService) SetResultLink(ctx context.Context, actor, id, link string) (*model.Item, error) {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	link = strings.TrimSpace(link)
+	var p problems
+	if current.Kind != model.KindDocumentation {
+		p.add("result_link is only for documentation")
+	}
+	if link != "" && !validSharePointLink(link) {
+		p.add("result_link must be an https link to a sharepoint.com folder")
+	}
+	if link != "" && hasSlot(current.Files, model.SlotResult) {
+		p.add("delete the uploaded results before saving a folder link")
+	}
+	if err := p.err(); err != nil {
+		return nil, err
+	}
+	if err := s.store.SetResultLink(ctx, id, link, actor); err != nil {
+		return nil, err
+	}
+	return s.store.Get(ctx, id)
+}
+
+func validSharePointLink(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || len(raw) > maxResultLinkLen {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "sharepoint.com" || strings.HasSuffix(host, ".sharepoint.com")
+}
+
+func hasSlot(files []model.ItemFile, slot string) bool {
+	for _, f := range files {
+		if f.Slot == slot {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ItemService) AddFiles(ctx context.Context, actor, id string, in []FileInput) (*model.Item, error) {
 	current, err := s.Get(ctx, id)
 	if err != nil {
@@ -250,6 +298,9 @@ func (s *ItemService) AddFiles(ctx context.Context, actor, id string, in []FileI
 			p.add("files[%d].size must not be negative", i)
 		}
 		switch {
+		case current.Kind == model.KindDocumentation && f.Slot == model.SlotResult && current.ResultLink != "":
+			// shortcut: checked on the loaded item, not in SQL; two users racing a link and an upload can both win.
+			p.add("files[%d]: remove the folder link before uploading results", i)
 		case current.Kind == model.KindDocumentation &&
 			(f.Slot == model.SlotReport || f.Slot == model.SlotCaptureProof || f.Slot == model.SlotResult):
 			f.ChannelCode = nil

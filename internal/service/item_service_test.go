@@ -58,6 +58,11 @@ func (f *fakeItemStore) UnsetChannel(context.Context, string, string, string) er
 	return nil
 }
 
+func (f *fakeItemStore) SetResultLink(_ context.Context, _, link, _ string) error {
+	f.item.ResultLink = link
+	return nil
+}
+
 func (f *fakeItemStore) AddFiles(_ context.Context, _, _ string, files []model.ItemFile) error {
 	f.addedFiles = files
 	return nil
@@ -225,6 +230,47 @@ func TestAddFiles_SlotMustFitKind(t *testing.T) {
 			assert.Nil(t, store.addedFiles)
 		})
 	}
+}
+
+func TestSetResultLink_OneResultSourcePerDocumentation(t *testing.T) {
+	folder := "https://bp3kp.sharepoint.com/sites/humas/Shared%20Documents/2026/Rapat"
+	result := model.ItemFile{Slot: model.SlotResult}
+	tests := []struct {
+		name, link, wantErr string
+		item                model.Item
+	}{
+		{"saves a folder", folder, "", model.Item{Kind: model.KindDocumentation}},
+		{"clears even with uploads", "", "", model.Item{Kind: model.KindDocumentation, Files: []model.ItemFile{result}}},
+		{"refused after uploads", folder, "delete the uploaded results", model.Item{Kind: model.KindDocumentation, Files: []model.ItemFile{result}}},
+		{"other files are fine", folder, "", model.Item{Kind: model.KindDocumentation, Files: []model.ItemFile{{Slot: model.SlotReport}}}},
+		{"not sharepoint", "https://drive.google.com/x", "sharepoint.com", model.Item{Kind: model.KindDocumentation}},
+		{"lookalike host", "https://sharepoint.com.evil.test/x", "sharepoint.com", model.Item{Kind: model.KindDocumentation}},
+		{"no script links", "javascript:alert(1)//.sharepoint.com", "sharepoint.com", model.Item{Kind: model.KindDocumentation}},
+		{"not documentation", folder, "only for documentation", model.Item{Kind: model.KindPublication}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.item.ID = testItemID
+			store := &fakeItemStore{item: &tc.item}
+			got, err := NewItemService(store, nil).SetResultLink(context.Background(), "u", testItemID, " "+tc.link+" ")
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.link, got.ResultLink)
+		})
+	}
+}
+
+func TestAddFiles_RefusesResultsWhenFolderLinked(t *testing.T) {
+	store := &fakeItemStore{item: &model.Item{ID: testItemID, Kind: model.KindDocumentation, ResultLink: "https://x.sharepoint.com/f"}}
+	key := "items/2026/11/0123456789abcdef0123456789abcdef.jpg"
+	svc := NewItemService(store, nil)
+	_, err := svc.AddFiles(context.Background(), "u", testItemID, []FileInput{{Slot: model.SlotResult, Key: key, Name: "a.jpg"}})
+	require.ErrorContains(t, err, "remove the folder link")
+	_, err = svc.AddFiles(context.Background(), "u", testItemID, []FileInput{{Slot: model.SlotCaptureProof, Key: key, Name: "a.jpg"}})
+	require.NoError(t, err, "capture proof does not compete with the folder")
 }
 
 func TestRangeValidation(t *testing.T) {

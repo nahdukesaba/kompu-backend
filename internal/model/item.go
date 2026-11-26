@@ -30,6 +30,7 @@ type Item struct {
 	Location   string `json:"location"`
 	Objective  string `json:"objective"`
 	ReportText string `json:"report_text"`
+	ResultLink string `json:"result_link"` // SharePoint folder; excludes result uploads
 
 	// Publication.
 	Category        string  `json:"category"`

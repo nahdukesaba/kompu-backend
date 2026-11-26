@@ -112,6 +112,7 @@ func TestRoutes_EverythingElseNeedsAuth(t *testing.T) {
 		{http.MethodPut, item},
 		{http.MethodDelete, item},
 		{http.MethodPatch, item + "/schedule"},
+		{http.MethodPut, item + "/result-link"},
 		{http.MethodPut, item + "/channels/instagram"},
 		{http.MethodDelete, item + "/channels/instagram"},
 		{http.MethodPost, item + "/files"},

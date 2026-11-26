@@ -19,6 +19,7 @@ type ItemAPI interface {
 	Update(ctx context.Context, actor, id string, in service.ItemInput) (*model.Item, error)
 	Reschedule(ctx context.Context, actor, id, start, end string) (*model.Item, error)
 	SetChannel(ctx context.Context, actor, id, code string, posted bool, postedOn string) (*model.Item, error)
+	SetResultLink(ctx context.Context, actor, id, link string) (*model.Item, error)
 	AddFiles(ctx context.Context, actor, id string, in []service.FileInput) (*model.Item, error)
 	DeleteFile(ctx context.Context, actor, id, fileID string) (*model.Item, error)
 	Delete(ctx context.Context, actor, id string) error
@@ -47,6 +48,7 @@ func (h *ItemHandler) Register(r fiber.Router, auth fiber.Handler) {
 	g.Get("/:id", h.get)
 	g.Put("/:id", h.update)
 	g.Patch("/:id/schedule", h.schedule)
+	g.Put("/:id/result-link", h.resultLink)
 	g.Delete("/:id", h.remove)
 	g.Put("/:id/channels/:code", h.setChannel)
 	g.Delete("/:id/channels/:code", h.unsetChannel)
@@ -126,6 +128,21 @@ func (h *ItemHandler) schedule(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
 	it, err := h.svc.Reschedule(c.UserContext(), actor, c.Params("id"), in.StartDate, in.EndDate)
+	return respondItem(c, it, err)
+}
+
+func (h *ItemHandler) resultLink(c *fiber.Ctx) error {
+	actor, err := actorID(c)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		ResultLink string `json:"result_link"`
+	}
+	if err := c.BodyParser(&in); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	it, err := h.svc.SetResultLink(c.UserContext(), actor, c.Params("id"), in.ResultLink)
 	return respondItem(c, it, err)
 }
 
